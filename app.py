@@ -7,7 +7,7 @@ import requests
 import re
 
 # --- [1. 환경 설정] ---
-# 클라우드 서버의 금고(secrets)에서 API 키를 몰래 꺼내오도록 지시합니다.
+# 클라우드 서버의 금고(secrets)에서 API 키를 꺼내옵니다.
 API_KEY = st.secrets["YOUTUBE_API"]
 youtube = build('youtube', 'v3', developerKey=API_KEY)
 
@@ -54,29 +54,40 @@ with st.sidebar:
     st.header("⚙️ 분석 설정")
     mode = st.radio("모드 선택", ["실시간 인기 차트", "키워드 정밀 검색"])
     target_format = st.selectbox("포맷 필터", ["전체", "📱 쇼츠만", "📺 롱폼만"])
+    
+    # [수정됨] 분석 기간을 선택 박스로 변경 (은혜님 요청사항 반영)
+    period_options = {
+        "1일": 1,
+        "1주일": 7,
+        "1개월": 30,
+        "3개월": 90
+        
+    }
+    selected_label = st.selectbox("업로드 시점 필터", list(period_options.keys()), index=1)
+    days_limit = period_options[selected_label]
+    
     keyword_ko = st.text_input("검색 키워드", value="동물")
-    days_limit = st.slider("분석 기간 (일)", 1, 30, 7)
     min_v = st.number_input("최소 조회수 기준", value=10000)
     
-    # [수정됨] Streamlit 최신 버전에 맞춰 width='stretch' 사용
-    start_btn = st.button("🚀 분석 시작", width='stretch')
+    # 버튼 너비를 가득 채우도록 설정
+    start_btn = st.button("🚀 분석 시작", use_container_width=True)
 
 # --- [4. 메인 화면 및 결과 출력] ---
 st.title("📈 실시간 유튜브 순위 대시보드")
 
 if start_btn:
-    with st.spinner('데이터를 수집하고 예쁜 카드로 만들고 있습니다...'):
+    with st.spinner(f'{selected_label} 내의 데이터를 수집하고 있습니다...'):
         tasks = [{"region": "US", "lang": "en", "name": "미국"}, {"region": "JP", "lang": "ja", "name": "일본"}]
         final_data = []
 
         try:
-            # [API 데이터 수집 로직]
             if mode == "실시간 인기 차트":
                 for task in tasks:
                     req = youtube.videos().list(part="snippet,statistics,contentDetails", chart="mostPopular", regionCode=task['region'], maxResults=15).execute()
                     for item in req['items']:
                         final_data.append(get_video_details(item, task['name']))
             else:
+                # 선택된 날짜만큼 과거 시간 계산
                 after_date = (datetime.utcnow() - timedelta(days=days_limit)).isoformat() + 'Z'
                 for task in tasks:
                     q_trans = translate_keyword(keyword_ko, task['lang'])
@@ -88,7 +99,6 @@ if start_btn:
                             if int(item['statistics'].get('viewCount', 0)) >= min_v:
                                 final_data.append(get_video_details(item, task['name']))
 
-            # [데이터 정렬 및 필터링]
             if final_data:
                 df = pd.DataFrame(final_data)
                 if target_format == "📱 쇼츠만": df = df[df['포맷'] == "📱 쇼츠"]
@@ -98,7 +108,6 @@ if start_btn:
                     df = df.sort_values(by="조회수", ascending=False).reset_index(drop=True)
                     st.success(f"총 {len(df)}개의 글로벌 트렌드 영상을 찾았습니다!")
                     
-                    # --- [은혜님 맞춤형 카드 UI 생성 (들여쓰기 완전 제거)] ---
                     html_content = """
 <style>
 .card-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 20px; margin-top: 10px; }
@@ -115,7 +124,6 @@ if start_btn:
 </style>
 <div class='card-grid'>
 """
-                    
                     for idx, row in df.iterrows():
                         rank = idx + 1
                         badge_nat = "bg-us" if row['국가'] == "미국" else "bg-jp"
@@ -141,14 +149,10 @@ if start_btn:
 </a>
 """
                     html_content += "</div>"
-                    
-                    # Streamlit 안에 HTML 디자인 주입
                     st.markdown(html_content, unsafe_allow_html=True)
-                    
                 else:
                     st.warning("조건에 맞는 영상이 없습니다.")
             else:
                 st.error("데이터 수집에 실패했습니다.")
         except Exception as e:
             st.error(f"오류가 발생했습니다: {e}")
-            
